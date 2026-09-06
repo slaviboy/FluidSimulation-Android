@@ -38,4 +38,37 @@ class FluidConfig {
     @Volatile var sunrays: Boolean = true
     @Volatile var sunraysResolution: Int = 196
     @Volatile var sunraysWeight: Float = 1.0f
+
+    /** Restores every field to its default value, e.g. for the settings screen's Reset button. */
+    fun reset() {
+        simResolution = 128
+        dyeResolution = 1024
+
+        densityDissipation = 1f
+        velocityDissipation = 0.2f
+        pressure = 0.8f
+        pressureIterations = 20
+        curl = 30f
+        splatRadius = 0.25f
+        splatForce = 6000f
+
+        shading = true
+        colorful = true
+        colorUpdateSpeed = 10f
+        paused = false
+
+        backColor = floatArrayOf(0f, 0f, 0f)
+        transparent = false
+
+        bloom = true
+        bloomIterations = 8
+        bloomResolution = 256
+        bloomIntensity = 0.8f
+        bloomThreshold = 0.6f
+        bloomSoftKnee = 0.7f
+
+        sunrays = true
+        sunraysResolution = 196
+        sunraysWeight = 1.0f
+    }
 }

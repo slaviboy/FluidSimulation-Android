@@ -99,6 +99,13 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         pointerManager.queueRandomSplats(amount)
     }
 
+    /** Restores [config] to its defaults, e.g. from the settings screen's Reset button. */
+    fun resetConfig() {
+        config.reset()
+        requestFramebufferReinit()
+        requestDisplayKeywordsUpdate()
+    }
+
     // region lifecycle
 
     override fun onSurfaceCreated(gl: GL10?, eglConfig: EGLConfig?) {

@@ -22,6 +22,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -78,8 +80,14 @@ fun FluidSettingsScreen(renderer: FluidRenderer, onClose: () -> Unit) {
     var sunraysWeight by remember { mutableStateOf(config.sunraysWeight) }
 
     var transparent by remember { mutableStateOf(config.transparent) }
-    var backColorHue by remember {
-        mutableStateOf(rgbToHueDegrees(config.backColor[0], config.backColor[1], config.backColor[2]))
+
+    val initialHsv = remember { rgbToHsv(config.backColor[0], config.backColor[1], config.backColor[2]) }
+    var backColorHue by remember { mutableStateOf(initialHsv.first) }
+    var backColorSaturation by remember { mutableStateOf(initialHsv.second) }
+    var backColorBrightness by remember { mutableStateOf(initialHsv.third) }
+
+    fun applyBackColor(hue: Float, saturation: Float, brightness: Float) {
+        config.backColor = ColorUtil.hsvToRgb(hue / 360f, saturation, brightness)
     }
 
     Box(
@@ -263,11 +271,53 @@ fun FluidSettingsScreen(renderer: FluidRenderer, onClose: () -> Unit) {
                     fontSize = 14.sp,
                     modifier = Modifier.padding(top = 8.dp)
                 )
-                HueSlider(
-                    hueDegrees = backColorHue,
-                    onHueChange = { hue ->
+
+                val hueColors = remember {
+                    (0..12).map { step -> hsvToComposeColor(step / 12f, 1f, 1f) }
+                }
+                GradientPickerSlider(
+                    fraction = backColorHue / 360f,
+                    colors = hueColors,
+                    onFractionChange = { fraction ->
+                        val hue = fraction * 360f
                         backColorHue = hue
-                        config.backColor = ColorUtil.hsvToRgb(hue / 360f, 1f, 1f)
+                        applyBackColor(hue, backColorSaturation, backColorBrightness)
+                    },
+                    modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
+                )
+
+                Text(
+                    "Saturation: ${"%.2f".format(backColorSaturation)}",
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                GradientPickerSlider(
+                    fraction = backColorSaturation,
+                    colors = listOf(
+                        hsvToComposeColor(backColorHue / 360f, 0f, backColorBrightness),
+                        hsvToComposeColor(backColorHue / 360f, 1f, backColorBrightness)
+                    ),
+                    onFractionChange = { fraction ->
+                        backColorSaturation = fraction
+                        applyBackColor(backColorHue, fraction, backColorBrightness)
+                    },
+                    modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
+                )
+
+                Text(
+                    "Brightness: ${"%.2f".format(backColorBrightness)}",
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                GradientPickerSlider(
+                    fraction = backColorBrightness,
+                    colors = listOf(
+                        Color.Black,
+                        hsvToComposeColor(backColorHue / 360f, backColorSaturation, 1f)
+                    ),
+                    onFractionChange = { fraction ->
+                        backColorBrightness = fraction
+                        applyBackColor(backColorHue, backColorSaturation, fraction)
                     },
                     modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
                 )
@@ -277,9 +327,46 @@ fun FluidSettingsScreen(renderer: FluidRenderer, onClose: () -> Unit) {
                 onClick = { renderer.triggerRandomSplats() },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 16.dp)
+                    .padding(top = 16.dp)
             ) {
                 Text("Random Splats")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    renderer.resetConfig()
+
+                    simResolution = config.simResolution
+                    dyeResolution = config.dyeResolution
+                    densityDissipation = config.densityDissipation
+                    velocityDissipation = config.velocityDissipation
+                    pressure = config.pressure
+                    curl = config.curl
+                    splatRadius = config.splatRadius
+
+                    shading = config.shading
+                    colorful = config.colorful
+                    paused = config.paused
+
+                    bloom = config.bloom
+                    bloomIntensity = config.bloomIntensity
+                    bloomThreshold = config.bloomThreshold
+
+                    sunrays = config.sunrays
+                    sunraysWeight = config.sunraysWeight
+
+                    transparent = config.transparent
+                    val (hue, saturation, brightness) = rgbToHsv(config.backColor[0], config.backColor[1], config.backColor[2])
+                    backColorHue = hue
+                    backColorSaturation = saturation
+                    backColorBrightness = brightness
+                },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+            ) {
+                Text("Reset to Defaults")
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -356,32 +443,37 @@ private fun ResolutionSelector(
     }
 }
 
+/**
+ * A draggable horizontal gradient bar used for the background color picker's hue,
+ * saturation and brightness sliders: [fraction] (0..1) positions the thumb, [colors]
+ * defines the gradient shown along the track, and dragging/tapping reports the new
+ * fraction via [onFractionChange].
+ */
 @Composable
-private fun HueSlider(hueDegrees: Float, onHueChange: (Float) -> Unit, modifier: Modifier = Modifier) {
-    val hueColors = remember {
-        (0..12).map { step ->
-            val rgb = ColorUtil.hsvToRgb(step / 12f, 1f, 1f)
-            Color(rgb[0], rgb[1], rgb[2])
-        }
-    }
+private fun GradientPickerSlider(
+    fraction: Float,
+    colors: List<Color>,
+    onFractionChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(40.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(Brush.horizontalGradient(hueColors))
+            .background(Brush.horizontalGradient(colors))
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    onHueChange((offset.x / size.width.toFloat()).coerceIn(0f, 1f) * 360f)
+                    onFractionChange((offset.x / size.width.toFloat()).coerceIn(0f, 1f))
                 }
             }
             .pointerInput(Unit) {
                 detectDragGestures { change, _ ->
-                    onHueChange((change.position.x / size.width.toFloat()).coerceIn(0f, 1f) * 360f)
+                    onFractionChange((change.position.x / size.width.toFloat()).coerceIn(0f, 1f))
                 }
             }
     ) {
-        val thumbOffset = maxWidth * (hueDegrees / 360f).coerceIn(0f, 1f)
+        val thumbOffset = maxWidth * fraction.coerceIn(0f, 1f)
         Box(
             modifier = Modifier
                 .offset(x = thumbOffset - 2.dp)
@@ -392,15 +484,25 @@ private fun HueSlider(hueDegrees: Float, onHueChange: (Float) -> Unit, modifier:
     }
 }
 
-private fun rgbToHueDegrees(r: Float, g: Float, b: Float): Float {
+private fun hsvToComposeColor(hueFraction: Float, saturation: Float, value: Float): Color {
+    val rgb = ColorUtil.hsvToRgb(hueFraction, saturation, value)
+    return Color(rgb[0], rgb[1], rgb[2])
+}
+
+/** Returns (hue in 0..360, saturation in 0..1, value/brightness in 0..1). */
+private fun rgbToHsv(r: Float, g: Float, b: Float): Triple<Float, Float, Float> {
     val maxC = max(r, max(g, b))
     val minC = min(r, min(g, b))
     val delta = maxC - minC
-    if (delta == 0f) return 0f
-    val hue = when (maxC) {
-        r -> 60f * (((g - b) / delta).mod(6f))
-        g -> 60f * (((b - r) / delta) + 2f)
+
+    val hue = when {
+        delta == 0f -> 0f
+        maxC == r -> 60f * (((g - b) / delta).mod(6f))
+        maxC == g -> 60f * (((b - r) / delta) + 2f)
         else -> 60f * (((r - g) / delta) + 4f)
-    }
-    return if (hue < 0f) hue + 360f else hue
+    }.let { if (it < 0f) it + 360f else it }
+
+    val saturation = if (maxC == 0f) 0f else delta / maxC
+    val value = maxC
+    return Triple(hue, saturation, value)
 }
