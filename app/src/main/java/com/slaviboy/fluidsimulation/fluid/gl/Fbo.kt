@@ -3,10 +3,7 @@ package com.slaviboy.fluidsimulation.fluid.gl
 import android.opengl.GLES30
 import com.slaviboy.opengl.main.OpenGLStatic
 
-/**
- * A single render-target: a texture attached to a framebuffer object. Ports the
- * WebGL fluid simulation's `createFBO`/FBO-object pattern.
- */
+/** A single render-target: a texture attached to a framebuffer object. */
 class Fbo(
     val texture: Int,
     val framebuffer: Int,

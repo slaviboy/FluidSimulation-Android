@@ -3,13 +3,13 @@ package com.slaviboy.fluidsimulation.fluid.gl
 import android.opengl.GLES30
 
 /**
- * Runtime FBO-completeness probe for floating point render-target formats, ported
- * from the WebGL fluid simulation's `getSupportedFormat`/`supportRenderTextureFormat`.
- * Rather than assuming `EXT_color_buffer_float`/half-float support from an
- * extension string, this actually tries to render to a throwaway texture of each
- * candidate format and falls back R16F -> RG16F -> RGBA16F on failure, exactly
- * matching upstream behavior and degrading gracefully on devices lacking full
- * float-render support.
+ * Runtime FBO-completeness probe for floating point render-target formats. Rather
+ * than assuming `EXT_color_buffer_float`/half-float support from an extension
+ * string (some GPU/driver combinations advertise it but still fail to render to
+ * certain formats), this actually tries to render to a throwaway texture of each
+ * candidate format and falls back R16F -> RG16F -> RGBA16F on failure, so the
+ * simulation degrades gracefully instead of getting silently-corrupt framebuffers
+ * on devices lacking full float-render support.
  */
 object TextureFormatProbe {
 

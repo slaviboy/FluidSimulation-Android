@@ -7,13 +7,10 @@ import kotlin.math.abs
 
 /**
  * Tracks active touch pointers and maps [MotionEvent]s to normalized UV splat
- * coordinates, ported from the WebGL fluid simulation's pointer handling.
- *
- * Unlike the original, which reserves index 0 of a JS array for a synthetic
- * mouse pointer (id = -1) with real touches occupying subsequent slots, Android's
- * `MotionEvent.getPointerId()` already assigns one stable small integer per
- * active finger on a touchscreen, so a flat list keyed directly by that id is
- * simpler and equivalent (no "mouse slot" concept needed).
+ * coordinates. Android's `MotionEvent.getPointerId()` assigns one stable small
+ * integer per active finger on a touchscreen, so a flat list keyed directly by
+ * that id is enough to support several simultaneous touches, each with its own
+ * independent splat trail.
  */
 class PointerManager {
 
@@ -80,6 +77,8 @@ class PointerManager {
         pointer.down = true
         pointer.moved = false
         pointer.texcoordX = x / width
+        // Android's Y axis points down from the top of the view, but the shaders'
+        // texture-coordinate convention (vUv) has 0 at the bottom, so it's flipped here.
         pointer.texcoordY = 1f - y / height
         pointer.prevTexcoordX = pointer.texcoordX
         pointer.prevTexcoordY = pointer.texcoordY
@@ -98,6 +97,12 @@ class PointerManager {
         pointer.moved = abs(pointer.deltaX) > 0f || abs(pointer.deltaY) > 0f
     }
 
+    // texcoordX/Y are normalized to [0,1] independently per axis, so on a non-square
+    // screen a drag that moves the same fraction of the width vs. height covers a
+    // different physical distance. These corrections rescale the delta on the
+    // *shorter* axis by the aspect ratio so a drag feels like it's covering the same
+    // physical distance regardless of orientation (this must stay in sync with the
+    // matching `aspectRatio` correction applied in splat_shader.glsl).
     private fun correctDeltaX(delta: Float, width: Int, height: Int): Float {
         val aspectRatio = width.toFloat() / height
         return if (aspectRatio < 1f) delta * aspectRatio else delta

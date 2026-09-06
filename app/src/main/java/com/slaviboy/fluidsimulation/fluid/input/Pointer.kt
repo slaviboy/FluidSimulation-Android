@@ -1,6 +1,6 @@
 package com.slaviboy.fluidsimulation.fluid.input
 
-/** Mirrors the WebGL fluid simulation's `pointerPrototype`, one instance per active touch. */
+/** Tracked state for one active touch, from the moment it goes down until it lifts. */
 data class Pointer(
     var id: Int = -1,
     var texcoordX: Float = 0f,

@@ -5,8 +5,8 @@ import com.slaviboy.opengl.main.OpenGLStatic
 
 /**
  * Compiles and links a vertex+fragment shader pair into a GL program, then
- * introspects all active uniforms into a name->location map. Ports the WebGL
- * fluid simulation's `Program` class.
+ * introspects all active uniforms into a name->location map so callers can look
+ * one up by the name it has in the GLSL source instead of tracking locations by hand.
  */
 class ShaderProgram(vertexSource: String, fragmentSource: String) {
 

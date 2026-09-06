@@ -3,10 +3,7 @@ package com.slaviboy.fluidsimulation.fluid
 import kotlin.math.floor
 import kotlin.random.Random
 
-/**
- * Color helpers ported from the WebGL fluid simulation (HSVtoRGB/generateColor/
- * normalizeColor/wrap).
- */
+/** HSV/RGB color helpers used for dye splat colors and the background color picker. */
 object ColorUtil {
 
     fun hsvToRgb(h: Float, s: Float, v: Float): FloatArray {
@@ -35,10 +32,7 @@ object ColorUtil {
         return c
     }
 
-    fun normalizeColor(r: Int, g: Int, b: Int): FloatArray {
-        return floatArrayOf(r / 255f, g / 255f, b / 255f)
-    }
-
+    /** Keeps `value` inside [min, max) by wrapping around, e.g. the color-cycle timer in [PointerManager]. */
     fun wrap(value: Float, min: Float, max: Float): Float {
         val range = max - min
         if (range == 0f) return min

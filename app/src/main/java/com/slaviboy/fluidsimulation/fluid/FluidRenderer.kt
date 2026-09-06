@@ -21,9 +21,11 @@ import javax.microedition.khronos.opengles.GL10
 import kotlin.math.roundToInt
 
 /**
- * Native GLES 3.0 port of the WebGL fluid simulation's per-frame pipeline
- * (script.js: `step`/`render`/`applyBloom`/`applySunrays`/`splat`). Owns all
- * shader programs, framebuffers and simulation state.
+ * Runs the whole fluid simulation, once per frame: [step] solves the incompressible
+ * Navier-Stokes equations on the GPU (curl -> vorticity confinement -> divergence ->
+ * pressure solve -> gradient subtraction -> advection), then [render] composites the
+ * result to the screen with the optional bloom/sunrays effects. Owns every shader
+ * program, framebuffer and simulation-state texture used to do that.
  */
 class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
@@ -137,8 +139,10 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         loadDitheringTexture()
         formats = TextureFormatProbe.probe()
 
-        // Surface (re)creation can happen after EGL context loss (app backgrounded/foregrounded),
-        // which has no web equivalent; treat every call as a full reset.
+        // onSurfaceCreated can fire more than once per app session -- Android may destroy
+        // and recreate the EGL context (e.g. backgrounding the app), which throws away
+        // every GL object that was bound to the old context. Treat every call as a full
+        // reset rather than assuming it only ever runs once at startup.
         dye = null
         velocity = null
         divergence = null
@@ -225,6 +229,11 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     // region framebuffer (re)creation
 
+    // Applies `resolution` to the screen's *shorter* dimension and scales the longer
+    // one by the aspect ratio, so e.g. simResolution=128 always means "128 texels
+    // across the short side" whether the device is in portrait or landscape, keeping
+    // the level of physical detail consistent across orientations instead of the
+    // grid silently getting coarser/finer whenever the app rotates.
     private fun getResolution(resolution: Int): Pair<Int, Int> {
         var aspectRatio = surfaceWidth.toFloat() / surfaceHeight.toFloat()
         if (aspectRatio < 1f) aspectRatio = 1f / aspectRatio
@@ -343,6 +352,9 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private fun multipleSplats(amount: Int) {
         repeat(amount) {
+            // generateColor() dims its output to blend well when many overlapping
+            // drag-splats keep reinforcing each other; a one-off random burst has no
+            // such reinforcement, so it's boosted back up to read as vividly colored.
             val color = ColorUtil.generateColor()
             color[0] *= 10f
             color[1] *= 10f
@@ -355,6 +367,10 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     }
 
+    // splat_shader.glsl un-distorts its circular falloff on a non-square viewport by
+    // scaling the x-distance by aspectRatio; that same scaling would otherwise shrink
+    // the *effective* radius on wide (landscape) screens, so it's pre-compensated here
+    // to keep the splat size feeling consistent across orientations.
     private fun correctRadius(radius: Float): Float {
         val aspectRatio = surfaceWidth.toFloat() / surfaceHeight.toFloat()
         return if (aspectRatio > 1f) radius * aspectRatio else radius
@@ -383,6 +399,14 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     // region simulation step
 
+    // The stable-fluids algorithm: each sub-step must run in this order because it
+    // reads the output of the one before it. In short -- curl measures how much the
+    // flow is rotating; vorticity confinement feeds that back in as a force so
+    // swirling detail doesn't get smoothed away; divergence measures how much the
+    // flow currently violates "fluid can't be created or destroyed"; the pressure
+    // solve (a Jacobi iteration) finds the pressure field that would cancel that out;
+    // gradient subtraction applies it, leaving a divergence-free velocity field; and
+    // finally advection moves both velocity and dye forward through that field.
     private fun step(dt: Float) {
         val vel = velocity ?: return
         val dyeFbo = dye ?: return
@@ -417,6 +441,10 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         Blit.blit(pres.write)
         pres.swap()
 
+        // Jacobi iteration for the Poisson pressure equation: div (bound once to unit 0,
+        // constant across iterations) is solved against pressure, which ping-pongs
+        // between read/write each iteration -- more iterations converge closer to a
+        // physically-correct pressure field at the cost of more GPU work per frame.
         pressureProgram.bind()
         GLES30.glUniform2f(pressureProgram.uniforms.getValue("texelSize"), vel.texelSizeX, vel.texelSizeY)
         GLES30.glUniform1i(pressureProgram.uniforms.getValue("uDivergence"), div.attach(0))
@@ -433,6 +461,12 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         Blit.blit(vel.write)
         vel.swap()
 
+        // Advection traces each texel backward along the velocity field to find where
+        // its value "came from," then samples the source texture there. `texelSize`
+        // scales that backward step and must always be the *velocity* field's texel
+        // size (it's what defines the flow), regardless of whether velocity or dye is
+        // the thing actually being resampled -- so it's set once and reused for both
+        // passes below instead of being recomputed per source.
         advectionProgram.bind()
         GLES30.glUniform2f(advectionProgram.uniforms.getValue("texelSize"), vel.texelSizeX, vel.texelSizeY)
         var velocityId = vel.read.attach(0)
@@ -460,10 +494,19 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         if (config.bloom) applyBloom(dyeFbo.read, bloom)
         if (config.sunrays) {
+            // dyeFbo.write is reused as disposable scratch space for the sunrays mask: by
+            // this point step() has already consumed and swapped it, so it just holds
+            // stale pre-advection data nothing else still needs this frame. Deliberate
+            // reuse to avoid allocating (and resizing on every resolution change) a
+            // dedicated scratch FBO purely for this one intermediate mask.
             applySunrays(dyeFbo.read, dyeFbo.write, sunrays)
             blur(sunrays!!, sunraysTemp!!, 1)
         }
 
+        // Rendering to the screen (target == null) always blends normally; rendering to
+        // an offscreen target only blends when it's meant to end up opaque (!transparent)
+        // -- a transparent offscreen target needs its own alpha preserved untouched, so
+        // blending must stay off there instead of compositing over whatever was left in it.
         if (target == null || !config.transparent) {
             GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)
             GLES30.glEnable(GLES30.GL_BLEND)
@@ -480,6 +523,13 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         drawDisplay(target)
     }
 
+    // A mip-chain blur: bloomFbos holds progressively smaller framebuffers (bloomFbos[0]
+    // is the largest/least-blurred, the last is the smallest/most-blurred). First the
+    // brightest pixels are extracted (bloomPrefilterProgram) into `destination`, then
+    // blurred-and-downsampled through the chain to the smallest size; then, switching to
+    // *additive* blending, each level is blurred again while upsampling back through the
+    // chain, accumulating a soft glow at every scale on the way back up; a final pass
+    // scales the result by bloomIntensity into `destination`.
     private fun applyBloom(source: Fbo, destination: Fbo?) {
         if (destination == null || bloomFbos.size < 2) return
 
@@ -560,6 +610,10 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
         Blit.blit(target)
     }
 
+    // Texture units are assigned by fixed convention here -- 0=dye, 1=bloom,
+    // 2=dithering, 3=sunrays -- matching what display_shader.glsl's samplers expect;
+    // there's nothing enforcing that mapping besides this function, so a new sampler
+    // must pick an unused unit number consistently on both sides.
     private fun drawDisplay(target: Fbo?) {
         val dyeFbo = dye ?: return
         val width = target?.width ?: surfaceWidth

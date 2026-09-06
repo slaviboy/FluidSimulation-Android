@@ -2,9 +2,9 @@ package com.slaviboy.fluidsimulation.fluid.gl
 
 /**
  * A ping-pong pair of [Fbo]s exposing `read`/`write` roles that swap each step.
- * Ports the WebGL fluid simulation's `createDoubleFBO`, used for velocity, dye
- * and pressure (fields that are iteratively updated: each pass reads the
- * previous state while writing the new one).
+ * Used for velocity, dye and pressure — fields that are iteratively updated,
+ * where each pass needs to read the previous state while writing the new one
+ * (writing in place would corrupt the read as neighboring texels are sampled).
  */
 class DoubleFbo(var read: Fbo, var write: Fbo) {
 

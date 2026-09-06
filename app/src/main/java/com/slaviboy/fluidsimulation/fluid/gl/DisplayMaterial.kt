@@ -3,11 +3,13 @@ package com.slaviboy.fluidsimulation.fluid.gl
 import android.content.Context
 
 /**
- * Ports the WebGL fluid simulation's `Material` class: the display shader is
- * compiled into one variant per active SHADING/BLOOM/SUNRAYS keyword combination
- * and cached. Kotlin's `Set<String>` already has correct equals/hashCode, so
- * (unlike the original's toy string-hash function) it's used directly as the
- * cache key.
+ * The final display shader has optional SHADING/BLOOM/SUNRAYS effects, each compiled
+ * in or out via a `#define` (see [ShaderText]) rather than branching at runtime, so
+ * a GPU never pays for an effect that's switched off. Since each combination needs
+ * its own compiled [ShaderProgram], this compiles one lazily per combination the
+ * settings screen actually selects and caches it (keyed by the keyword `Set`, which
+ * already has correct equals/hashCode) so toggling back to a previously-used
+ * combination is instant instead of re-compiling.
  */
 class DisplayMaterial(
     private val context: Context,

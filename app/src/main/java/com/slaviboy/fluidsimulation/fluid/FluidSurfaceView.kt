@@ -7,12 +7,10 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 
 /**
- * GLSurfaceView hosting the fluid simulation. Follows the same
- * GLSurfaceView + Renderer skeleton as the author's Galaxy app, but requests
- * an EGL config with no depth/stencil buffer (RGBA8888, 0, 0) since the
- * simulation never uses depth testing — matching the original WebGL context's
- * `{depth:false, stencil:false}` request rather than copying a depth-enabled
- * config that would be wasted here.
+ * GLSurfaceView hosting the fluid simulation. Requests an EGL config with no
+ * depth/stencil buffer (RGBA8888, 0, 0) since the simulation is pure 2D
+ * full-screen-quad rendering and never uses depth testing — a depth-enabled
+ * config would just be wasted here.
  */
 class FluidSurfaceView @JvmOverloads constructor(
     context: Context,

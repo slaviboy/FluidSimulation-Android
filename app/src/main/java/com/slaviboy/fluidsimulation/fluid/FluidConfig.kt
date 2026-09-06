@@ -1,9 +1,9 @@
 package com.slaviboy.fluidsimulation.fluid
 
 /**
- * Tunable simulation/render parameters, ported from the WebGL fluid simulation's
- * `config` object. CAPTURE_RESOLUTION and the screenshot/export pipeline are
- * intentionally omitted (out of scope for this port).
+ * Every tunable simulation/render parameter, with the same defaults the simulation
+ * starts up with. There's no screenshot/capture-resolution setting since there's no
+ * capture feature.
  *
  * Fields are `@Volatile` since they're written from the UI thread (settings
  * screen) and read every frame from the GL thread.

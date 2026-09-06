@@ -6,8 +6,9 @@ import java.nio.ByteOrder
 
 /**
  * Shared fullscreen-quad geometry (two triangles covering clip space) bound to
- * attribute location 0 (`aPosition`). Ports the WebGL fluid simulation's `blit`
- * closure, which every shader pass uses to draw into its target framebuffer.
+ * attribute location 0 (`aPosition`). Every simulation/render pass is really just
+ * "run this fragment shader over every pixel of a target," so they all draw this
+ * same quad into whatever [Fbo] (or the screen) they're writing to.
  */
 object Blit {
     private var vbo = 0

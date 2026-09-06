@@ -50,11 +50,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Settings screen mirroring the WebGL fluid simulation's dat.GUI controls, bound
- * live to [renderer]'s [com.slaviboy.fluidsimulation.fluid.FluidConfig]. Resolution
- * and shading/bloom/sunrays toggles require GL-thread work (framebuffer recreation,
- * shader recompilation) so those go through `renderer.requestFramebufferReinit()` /
- * `requestDisplayKeywordsUpdate()` rather than being applied directly.
+ * Every simulation/render control, bound live to [renderer]'s
+ * [com.slaviboy.fluidsimulation.fluid.FluidConfig]. Resolution and shading/bloom/sunrays
+ * toggles require GL-thread work (framebuffer recreation, shader recompilation) so
+ * those go through `renderer.requestFramebufferReinit()` / `requestDisplayKeywordsUpdate()`
+ * rather than being applied directly.
  */
 @Composable
 fun FluidSettingsScreen(renderer: FluidRenderer, onClose: () -> Unit) {
