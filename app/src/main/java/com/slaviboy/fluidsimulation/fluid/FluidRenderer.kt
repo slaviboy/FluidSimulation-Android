@@ -69,8 +69,34 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var sunrays: Fbo? = null
     private var sunraysTemp: Fbo? = null
 
+    @Volatile private var framebuffersDirty = false
+    @Volatile private var displayKeywordsDirty = false
+
     fun onTouchEvent(event: MotionEvent) {
         pointerManager.onTouchEvent(event, surfaceWidth, surfaceHeight)
+    }
+
+    /**
+     * Call after changing [config]'s resolution fields (simResolution/dyeResolution) from
+     * the settings screen. Framebuffer (re)creation is GL work, so it can't happen directly
+     * on the calling (UI) thread; it's deferred to the next [onDrawFrame] instead.
+     */
+    fun requestFramebufferReinit() {
+        framebuffersDirty = true
+    }
+
+    /**
+     * Call after toggling config.shading/bloom/sunrays from the settings screen: the display
+     * shader is compiled per keyword combination (see [DisplayMaterial]), so a new combination
+     * requires a (GL-thread) shader compile, deferred to the next [onDrawFrame].
+     */
+    fun requestDisplayKeywordsUpdate() {
+        displayKeywordsDirty = true
+    }
+
+    /** Triggers a burst of random splats, e.g. from the settings screen's "Random splats" button. */
+    fun triggerRandomSplats(amount: Int = (5..24).random()) {
+        pointerManager.queueRandomSplats(amount)
     }
 
     // region lifecycle
@@ -134,6 +160,15 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        if (framebuffersDirty) {
+            framebuffersDirty = false
+            initFramebuffers()
+        }
+        if (displayKeywordsDirty) {
+            displayKeywordsDirty = false
+            displayMaterial.setKeywords(activeDisplayKeywords())
+        }
+
         val dt = calcDeltaTime()
         pointerManager.updateColors(dt, config.colorUpdateSpeed)
         applyInputs()
@@ -281,8 +316,9 @@ class FluidRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // region input -> splats
 
     private fun applyInputs() {
-        while (pointerManager.splatStack.isNotEmpty()) {
-            multipleSplats(pointerManager.splatStack.removeFirst())
+        while (true) {
+            val amount = pointerManager.splatStack.poll() ?: break
+            multipleSplats(amount)
         }
         for (pointer in pointerManager.pointers) {
             if (pointer.moved) {

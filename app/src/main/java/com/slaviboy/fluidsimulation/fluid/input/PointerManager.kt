@@ -2,6 +2,7 @@ package com.slaviboy.fluidsimulation.fluid.input
 
 import android.view.MotionEvent
 import com.slaviboy.fluidsimulation.fluid.ColorUtil
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.abs
 
 /**
@@ -18,13 +19,17 @@ class PointerManager {
 
     val pointers = mutableListOf<Pointer>()
 
-    /** Queued random-splat-burst request counts, e.g. from the initial startup burst. */
-    val splatStack = ArrayDeque<Int>()
+    /**
+     * Queued random-splat-burst request counts (e.g. the initial startup burst, or a
+     * user-triggered "random splats" action from the settings screen). A thread-safe
+     * queue since it's written from the UI thread and drained from the GL thread.
+     */
+    val splatStack = ConcurrentLinkedQueue<Int>()
 
     private var colorUpdateTimer = 0f
 
     fun queueRandomSplats(amount: Int) {
-        splatStack.addLast(amount)
+        splatStack.add(amount)
     }
 
     fun updateColors(dt: Float, colorUpdateSpeed: Float) {
