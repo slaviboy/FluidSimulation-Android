@@ -1,5 +1,11 @@
 # Fluid Simulation
 
+| Play screen | Settings screen |
+|:---:|:---:|
+| ![Play screen](https://raw.githubusercontent.com/slaviboy/RepositoryImages/main/apps/FluidSimulation/Screenshot%202026-09-06%20at%2017.13.37.png) | ![Settings screen](https://raw.githubusercontent.com/slaviboy/RepositoryImages/main/apps/FluidSimulation/Screenshot%202026-09-06%20at%2017.39.31.png) |
+
+Built on **[slaviboy/OpenGL](https://github.com/slaviboy/OpenGL)** — an Android OpenGL ES utility library — for its low-level GLES helper functions, with the entire GPU simulation pipeline itself hand-written in raw OpenGL ES 3.0/GLSL (see [Libraries used](#libraries-used) for exactly what comes from where).
+
 A native Android/Kotlin fluid simulation rendered with OpenGL ES 3.0 and driven by touch. It runs a real-time incompressible fluid solver entirely on the GPU as a full-screen app, with a native settings UI on top for tuning the simulation live.
 
 ## What it does
@@ -8,19 +14,97 @@ Drag a finger across the screen and it injects a splat of colored dye plus a vel
 
 ## How it works
 
-### The simulation pipeline
+### The physics: why this looks like a real fluid
 
-Everything happens on the GPU, in `FluidRenderer.kt`, once per frame:
+A real fluid (smoke, ink in water, cream in coffee) obeys the **Navier–Stokes equations** for incompressible flow. Informally, two rules govern everything:
 
-1. **Curl** — computes the curl (rotation) of the velocity field into a scratch texture.
-2. **Vorticity confinement** — feeds the curl back in to add small-scale swirling detail that plain advection would otherwise damp out.
-3. **Divergence** — computes how much the velocity field violates incompressibility (mass shouldn't be created/destroyed).
-4. **Pressure solve** — a Jacobi iteration (20 iterations by default) solves the Poisson pressure equation against the divergence, run entirely on the GPU.
-5. **Gradient subtraction** — subtracts the pressure gradient from velocity, forcing the field back to (nearly) divergence-free/incompressible.
-6. **Advection** — the corrected velocity field is used to advect both itself (self-advection) and the dye (color) field forward in time.
-7. **Render** — optional **bloom** (a prefilter + multi-resolution blur/upsample chain for the glow effect) and **sunrays** (a radial light-shaft accumulation) passes, then a final display pass composites dye + bloom + sunrays + dithering into what's shown on screen.
+1. **Momentum carries itself forward.** Whatever the fluid is doing right now (its velocity field) determines where it — and anything floating in it, like dye — moves to next. This is called **advection**.
+2. **Fluid can't be created, destroyed, or compressed.** If flow is converging into a point, pressure must push back out to keep the total volume constant. This is the **incompressibility constraint**, enforced through a **pressure field**.
 
-Every step above is one of 20 GLSL ES 3.0 fragment shaders in `app/src/main/res/raw/`. All simulation state (velocity, dye, pressure, divergence, curl) lives in off-screen framebuffers, most of them **double-buffered** (`DoubleFbo.kt`) so a pass can read the previous frame's result while writing the new one, then swap.
+Solving these equations exactly is expensive and numerically fragile (naive solvers blow up or turn to NaN at real-time timesteps). This project uses **Jos Stam's "Stable Fluids"** method instead — the same technique behind most real-time fluid effects in games and demos — which reformulates the problem as a short pipeline of GPU-friendly steps that stay stable regardless of frame rate. Every step is a full-screen GLSL fragment shader that reads one or more textures and writes a new one; there's no CPU-side physics at all.
+
+### The data: fluid state as textures
+
+The simulation has no particles or vertices — just a handful of 2D textures, each one a grid where every texel is a physical quantity at that point in space:
+
+| Field | Texture format | What each texel stores |
+|---|---|---|
+| **Velocity** | 2-channel (RG16F) | The flow's (x, y) direction and speed at that point |
+| **Dye** | 4-channel (RGBA16F) | The visible color being carried along by the flow |
+| **Pressure** | 1-channel (R16F) | The pressure needed to keep flow divergence-free |
+| **Divergence** | 1-channel (R16F) | How much the velocity field currently violates incompressibility |
+| **Curl** | 1-channel (R16F) | The local rotation ("spin") of the flow, used for the swirl effect below |
+
+Velocity/pressure/divergence/curl all share one low resolution (**Sim Resolution** in settings — this is the actual physics grid), while dye is kept at a separate, much higher resolution (**Dye Resolution**) since color detail is far more visually important than physics precision — this is the single biggest performance/quality knob in the whole simulation.
+
+### The per-frame pipeline
+
+```mermaid
+flowchart LR
+    A[Velocity field] --> B[Curl]
+    B --> C["Vorticity confinement<br/>(adds swirl back in)"]
+    C --> D[Divergence]
+    D --> E["Pressure solve<br/>(Jacobi × 20)"]
+    E --> F["Gradient subtraction<br/>(enforces incompressibility)"]
+    F --> G["Advect velocity<br/>(self-advection)"]
+    G --> H["Advect dye<br/>(carried by velocity)"]
+    H --> I["Render<br/>(Bloom + Sunrays + Display)"]
+```
+
+1. **Curl** — measures how much the velocity field is rotating at each point (`∂vy/∂x − ∂vx/∂y`), written into a scratch texture.
+2. **Vorticity confinement** — turns curl back into a force and adds it to velocity. Advection alone numerically "smears out" fine rotational detail every frame; this step actively re-injects it, which is what gives the fluid its characteristic tight little swirls and eddies instead of just smoothly blurring into mush. The **Vorticity** setting scales how strong this force is.
+3. **Divergence** — measures how much the current velocity field is "pooling" or "spreading" at each point — the amount by which it violates "fluid can't be created or destroyed."
+4. **Pressure solve** — finds the pressure field that would exactly cancel that divergence out, by relaxing a Poisson equation with a **Jacobi iteration**: a simple GPU-friendly loop where every pixel repeatedly averages with its neighbors, minus the local divergence, converging closer to the correct answer each pass (20 passes by default — more passes look "stiffer" and more physically accurate at the cost of GPU time).
+5. **Gradient subtraction** — subtracts the pressure field's gradient from velocity. This is the step that actually *enforces* incompressibility: afterward, the velocity field is (very nearly) divergence-free.
+6. **Advect velocity, then dye** — for every texel, trace backward along the (now-correct) velocity field to find "where did the fluid here come from a moment ago," then sample that source position. Velocity advects *itself* this way (it carries its own momentum forward); dye is advected by that same velocity field, which is why the color always follows the flow exactly.
+7. **Render** — composites the dye field to the screen, with two optional GPU post-effects layered on: **Bloom** and **Sunrays** (below), plus a cheap fake-3D shading pass computed from the dye field's own brightness gradient.
+
+Every step above is one of 20 GLSL ES 3.0 fragment shaders in `app/src/main/res/raw/`, run in `FluidRenderer.kt`. Nothing here is a special case for touch or for any particular effect — the exact same handful of shaders run every single frame regardless of whether anything is currently touching the screen.
+
+### Reading and writing at the same time: double buffering
+
+Nearly every step above needs to read a field's *current* value at many neighboring texels while computing its *new* value — writing in place would corrupt those reads mid-pass, since a GPU has no guaranteed order for which pixel finishes first. Velocity, dye, and pressure are therefore all **double-buffered** (`DoubleFbo.kt`): two textures, `read` and `write`. A pass always reads from `read` and writes to `write`; once it finishes, the two are swapped, so `write` becomes next frame's `read`.
+
+```mermaid
+flowchart LR
+    subgraph Now["This pass"]
+        R1["read = A<br/>(previous state)"] -->|shader samples A,<br/>writes result| W1["write = B<br/>(new state)"]
+    end
+    Now -->|swap| Next
+    subgraph Next["Next pass"]
+        R2["read = B"] -->|shader samples B,<br/>writes result| W2["write = A"]
+    end
+```
+
+### Turning bright pixels into a glow: Bloom
+
+Bloom makes the brightest parts of the fluid look like they're radiating light, using a **mip-chain blur** — the same technique real-time renderers use for glow effects generally:
+
+```mermaid
+flowchart TD
+    P["Prefilter<br/>(keep only pixels above Bloom Threshold)"] --> D1[Downsample + blur]
+    D1 --> D2[Downsample + blur]
+    D2 --> D3["... (8 levels total)"]
+    D3 --> D4[Smallest mip]
+    D4 --> U3["Upsample + blur<br/>(additive blend)"]
+    U3 --> U2["Upsample + blur<br/>(additive blend)"]
+    U2 --> U1["Upsample + blur<br/>(additive blend)"]
+    U1 --> F["Final composite<br/>× Bloom Intensity"]
+```
+
+The **prefilter** pass keeps only pixels brighter than **Bloom Threshold** (with a soft "knee" so the cutoff isn't a harsh line). That result is then repeatedly downsampled and blurred into progressively smaller textures — each level blurring at a different physical radius relative to the screen — then blurred again on the way back *up* the chain with additive blending, so every scale of glow gets layered back together into one soft halo. **Bloom Intensity** scales the final result before it's added to the display.
+
+### Light shafts radiating outward: Sunrays
+
+Sunrays extracts a brightness mask from the dye field, then for every pixel walks a fixed number of steps *toward the screen center*, accumulating how much bright "stuff" it passes through along the way (decaying with distance) — the classic "radial god-rays" accumulation technique. Brighter, more continuous streaks toward the center accumulate a stronger ray. **Sunrays Weight** scales how strongly this contributes to the final image.
+
+### Why there's a dithering texture
+
+Bloom's final composite includes a gamma-correction step, which can introduce visible color banding in smooth gradients (an 8-bit-per-channel screen just doesn't have enough distinct brightness steps to render a perfectly smooth gradient). A small tileable noise texture (`ldr_lll1_0.png`) is sampled alongside the bloom and used to jitter each pixel by a tiny random amount before it's displayed — imperceptible on its own, but enough to break up banding into indistinguishable-from-smooth noise instead.
+
+### From a touch to a force: splats
+
+Dragging a finger doesn't touch the simulation state directly — every frame, each moved touch calls into the **splat** shader twice: once to add a velocity impulse (based on how far and fast the finger moved) into the velocity field, and once to add a burst of color into the dye field, both centered on the touch position with a smooth Gaussian falloff (`exp(-distance² / radius)`) so a splat fades out softly at its edges instead of having a hard boundary. The **Splat Radius** setting scales that falloff distance. An aspect-ratio correction keeps splats circular (not stretched into ovals) on non-square screens.
 
 ### Package layout
 
